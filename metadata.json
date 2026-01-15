@@ -1,0 +1,8 @@
+{
+  "name": "Manifest AI Studio",
+  "description": "A comprehensive AI creation platform featuring text-to-video, image generation, voice synthesis, and advanced agent building capabilities.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
