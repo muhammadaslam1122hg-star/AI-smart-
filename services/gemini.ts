@@ -1,165 +1,100 @@
 
-import { GoogleGenAI, Type, Modality, GenerateContentResponse } from "@google/genai";
+// Frontend Service Bridge to Backend
+const BACKEND_URL = '/api/v1'; // Assuming proxied or relative
 
-// Standard PCM decoding as required by guidelines
-function decode(base64: string) {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+// Device ID Helper (Simple fingerprint)
+const getDeviceId = () => {
+  let id = localStorage.getItem('smart_device_id');
+  if (!id) {
+    id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    localStorage.setItem('smart_device_id', id);
   }
-  return bytes;
-}
+  return id;
+};
 
-async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number,
-  numChannels: number,
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
-}
+const getHeaders = () => ({
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${localStorage.getItem('smart_token')}`
+});
 
 export const geminiService = {
-  async generateText(prompt: string, systemInstruction?: string, attachments?: { data: string, mimeType: string }[]) {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const parts: any[] = [{ text: prompt }];
-    
-    if (attachments) {
-      attachments.forEach(att => {
-        parts.push({
-          inlineData: { data: att.data.split(',')[1], mimeType: att.mimeType }
-        });
-      });
-    }
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: { parts },
-      config: {
-        systemInstruction,
-        thinkingConfig: { thinkingBudget: 0 }
-      },
+  async generateText(prompt: string, systemInstruction?: string, attachments?: any[]) {
+    const res = await fetch(`${BACKEND_URL}/generate`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        featureType: 'GENERIC_TEXT', 
+        prompt, 
+        systemInstruction, 
+        attachments,
+        deviceId: getDeviceId()
+      })
     });
-    return response.text;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    return data.result;
   },
 
-  async generateImage(prompt: string, aspectRatio: "1:1" | "16:9" | "9:16" = "1:1") {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: { parts: [{ text: prompt }] },
-      config: {
-        imageConfig: { aspectRatio }
-      }
+  async generateImage(prompt: string) {
+    const res = await fetch(`${BACKEND_URL}/generate`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        featureType: 'TEXT_TO_IMAGE', 
+        prompt,
+        deviceId: getDeviceId()
+      })
     });
-    
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-    throw new Error("No image generated");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    return data.result;
   },
 
   async editImage(imageUri: string, prompt: string) {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const base64Data = imageUri.split(',')[1];
-    const mimeType = imageUri.split(';')[0].split(':')[1];
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          { inlineData: { data: base64Data, mimeType } },
-          { text: prompt }
-        ]
-      }
+    const res = await fetch(`${BACKEND_URL}/generate`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        featureType: 'PHOTO_EDITING', 
+        imageUri, 
+        prompt,
+        deviceId: getDeviceId()
+      })
     });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-    throw new Error("No edited image returned");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    return data.result;
   },
 
   async generateVideo(prompt: string, durationLabel: string, initialImage?: string) {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    
-    let operation;
-    if (initialImage) {
-      const base64Data = initialImage.split(',')[1];
-      const mimeType = initialImage.split(';')[0].split(':')[1];
-      operation = await ai.models.generateVideos({
-        model: 'veo-3.1-fast-generate-preview',
-        prompt: `Create a ${durationLabel} cinematic video based on this image. Instruction: ${prompt}`,
-        image: { imageBytes: base64Data, mimeType },
-        config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '16:9' }
-      });
-    } else {
-      operation = await ai.models.generateVideos({
-        model: 'veo-3.1-fast-generate-preview',
-        prompt: `Create a ${durationLabel} cinematic video. Instruction: ${prompt}`,
-        config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '16:9' }
-      });
-    }
-
-    while (!operation.done) {
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      operation = await ai.operations.getVideosOperation({ operation });
-    }
-
-    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-    if (!downloadLink) throw new Error("Video generation failed");
-    
-    const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-    const blob = await videoResponse.blob();
-    return URL.createObjectURL(blob);
+    const res = await fetch(`${BACKEND_URL}/generate`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        featureType: 'AI_VIDEO_GENERATOR', 
+        prompt, 
+        durationLabel, 
+        initialImage,
+        deviceId: getDeviceId()
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    return data.result;
   },
 
-  async textToSpeech(text: string, voiceName: string = 'Kore') {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName },
-          },
-        },
-      },
+  async textToSpeech(text: string) {
+    const res = await fetch(`${BACKEND_URL}/generate`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ 
+        featureType: 'TEXT_TO_VOICE', 
+        prompt: text,
+        deviceId: getDeviceId()
+      })
     });
-
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!base64Audio) throw new Error("No audio generated");
-
-    const outputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-    const audioBuffer = await decodeAudioData(
-      decode(base64Audio),
-      outputAudioContext,
-      24000,
-      1,
-    );
-    
-    const source = outputAudioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(outputAudioContext.destination);
-    source.start();
-    return source;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    return data.result;
   }
 };
