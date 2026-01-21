@@ -1,6 +1,6 @@
 
 // Frontend Service Bridge to Backend
-const BACKEND_URL = '/api/v1'; // Assuming proxied or relative
+const BACKEND_URL = (import.meta as any).env?.VITE_API_URL || ''; 
 
 // Device ID Helper (Simple fingerprint)
 const getDeviceId = () => {
@@ -12,33 +12,37 @@ const getDeviceId = () => {
   return id;
 };
 
-const getHeaders = () => ({
-  'Content-Type': 'application/json',
-  'Authorization': `Bearer ${localStorage.getItem('smart_token')}`
-});
+const getHeaders = async () => {
+  const token = localStorage.getItem('smart_token');
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  };
+};
 
 export const geminiService = {
-  async generateText(prompt: string, systemInstruction?: string, attachments?: any[]) {
-    const res = await fetch(`${BACKEND_URL}/generate`, {
+  async generateText(prompt: string, systemInstruction?: string, attachments?: any[], isThinking: boolean = false) {
+    const res = await fetch(`${BACKEND_URL}/api/v1/generate`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify({ 
         featureType: 'GENERIC_TEXT', 
         prompt, 
         systemInstruction, 
         attachments,
+        isThinking,
         deviceId: getDeviceId()
       })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+    if (!res.ok) throw new Error(data.error || 'Request failed');
     return data.result;
   },
 
   async generateImage(prompt: string) {
-    const res = await fetch(`${BACKEND_URL}/generate`, {
+    const res = await fetch(`${BACKEND_URL}/api/v1/generate`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify({ 
         featureType: 'TEXT_TO_IMAGE', 
         prompt,
@@ -46,14 +50,14 @@ export const geminiService = {
       })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+    if (!res.ok) throw new Error(data.error || 'Request failed');
     return data.result;
   },
 
   async editImage(imageUri: string, prompt: string) {
-    const res = await fetch(`${BACKEND_URL}/generate`, {
+    const res = await fetch(`${BACKEND_URL}/api/v1/generate`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify({ 
         featureType: 'PHOTO_EDITING', 
         imageUri, 
@@ -62,14 +66,14 @@ export const geminiService = {
       })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+    if (!res.ok) throw new Error(data.error || 'Request failed');
     return data.result;
   },
 
   async generateVideo(prompt: string, durationLabel: string, initialImage?: string) {
-    const res = await fetch(`${BACKEND_URL}/generate`, {
+    const res = await fetch(`${BACKEND_URL}/api/v1/generate`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify({ 
         featureType: 'AI_VIDEO_GENERATOR', 
         prompt, 
@@ -79,14 +83,14 @@ export const geminiService = {
       })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+    if (!res.ok) throw new Error(data.error || 'Request failed');
     return data.result;
   },
 
   async textToSpeech(text: string) {
-    const res = await fetch(`${BACKEND_URL}/generate`, {
+    const res = await fetch(`${BACKEND_URL}/api/v1/generate`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify({ 
         featureType: 'TEXT_TO_VOICE', 
         prompt: text,
@@ -94,7 +98,16 @@ export const geminiService = {
       })
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
+    if (!res.ok) throw new Error(data.error || 'Request failed');
     return data.result;
+  },
+
+  async getUserStatus() {
+    const res = await fetch(`${BACKEND_URL}/api/v1/user/status`, {
+      method: 'GET',
+      headers: await getHeaders()
+    });
+    if (!res.ok) return null;
+    return await res.json();
   }
 };

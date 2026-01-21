@@ -1,68 +1,98 @@
-
 import React, { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import FeatureModal from './components/FeatureModal';
 import { FeatureType, UserProfile } from './types';
-import { Search, Bell, Share2, Github, LogIn, ShieldCheck, Zap } from 'lucide-react';
+import { ShieldCheck, Zap, LogIn, Activity, Cpu } from 'lucide-react';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, Auth } from 'firebase/auth';
+import { geminiService } from './services/gemini';
+
+const firebaseConfig = {
+  apiKey: (import.meta as any).env?.VITE_FIREBASE_API_KEY,
+  authDomain: (import.meta as any).env?.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: (import.meta as any).env?.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: (import.meta as any).env?.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: (import.meta as any).env?.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: (import.meta as any).env?.VITE_FIREBASE_APP_ID
+};
 
 const App: React.FC = () => {
   const [activeSidebarId, setActiveSidebarId] = useState('home');
   const [activeFeature, setActiveFeature] = useState<FeatureType | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isDeepThinking, setIsDeepThinking] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [authInstance, setAuthInstance] = useState<Auth | null>(null);
 
-  // Credit & Auth Synchronization Logic
   useEffect(() => {
-    const savedUser = localStorage.getItem('smart_platform_user');
-    if (savedUser) {
-      const parsedUser: UserProfile = JSON.parse(savedUser);
-      
-      // Check for 24h Credit Reset
-      const now = Date.now();
-      const twentyFourHours = 24 * 60 * 60 * 1000;
-      if (now - parsedUser.lastReset > twentyFourHours) {
-        parsedUser.credits = 100;
-        parsedUser.lastReset = now;
-        localStorage.setItem('smart_platform_user', JSON.stringify(parsedUser));
-      }
-      setUser(parsedUser);
+    let auth: Auth;
+    try {
+      const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+      auth = getAuth(app);
+      setAuthInstance(auth);
+    } catch (error) {
+      console.error("Firebase Auth Init Failed:", error);
+      setIsLoading(false);
+      return;
     }
+
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const token = await firebaseUser.getIdToken();
+          localStorage.setItem('smart_token', token);
+          
+          const status = await geminiService.getUserStatus();
+          setUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            displayName: firebaseUser.displayName || 'Neural Architect',
+            photoURL: firebaseUser.photoURL || `https://ui-avatars.com/api/?name=${firebaseUser.displayName}&background=6366f1&color=fff`,
+            credits: status?.credits ?? 0,
+            lastReset: status?.last_reset ?? Date.now(),
+            plan: 'Free'
+          });
+        } catch (err) {
+          console.error("Profile sync failed:", err);
+        }
+      } else {
+        setUser(null);
+        localStorage.removeItem('smart_token');
+      }
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const handleGoogleLogin = () => {
-    // Simulate Google Authentication
-    const newUser: UserProfile = {
-      uid: 'google_' + Math.random().toString(36).substr(2, 9),
-      email: 'user@gmail.com',
-      displayName: 'Smart User',
-      photoURL: 'https://ui-avatars.com/api/?name=Smart+User&background=6366f1&color=fff',
-      credits: 100,
-      lastReset: Date.now(),
-      plan: 'Free'
-    };
-    setUser(newUser);
-    localStorage.setItem('smart_platform_user', JSON.stringify(newUser));
-  };
-
-  const deductCredits = (amount: number) => {
-    if (!user) return false;
-    if (user.credits < amount) {
-      alert("Insufficient Credits. Please wait 24h for a reset.");
-      return false;
+  const handleGoogleLogin = async () => {
+    if (!authInstance) {
+      alert("System security module initializing. Please wait.");
+      return;
     }
-    const updatedUser = { ...user, credits: user.credits - amount };
-    setUser(updatedUser);
-    localStorage.setItem('smart_platform_user', JSON.stringify(updatedUser));
-    return true;
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(authInstance, provider);
+    } catch (error) {
+      console.error("Login failed", error);
+      alert("Authentication error. Please verify your connection.");
+    }
   };
 
   const handleFeatureClick = (type: FeatureType) => {
     if (!user) {
-      alert("Please Sign in with Google to use Smart Platform features.");
+      handleGoogleLogin();
       return;
     }
     setActiveFeature(type);
+  };
+
+  const refreshCredits = async () => {
+    const status = await geminiService.getUserStatus();
+    if (status && user) {
+      setUser({ ...user, credits: status.credits });
+    }
   };
 
   const handleSidebarSelect = (id: string) => {
@@ -88,8 +118,27 @@ const App: React.FC = () => {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen bg-[#030407] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-6">
+          <div className="relative">
+             <div className="w-16 h-16 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center animate-pulse">
+                <ShieldCheck className="text-indigo-500" size={32} />
+             </div>
+             <div className="absolute -top-1 -right-1 w-3 h-3 bg-indigo-500 rounded-full animate-ping"></div>
+          </div>
+          <div className="text-center">
+            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 mb-1">Neural Core</p>
+            <p className="text-[8px] font-bold text-slate-700 uppercase tracking-widest">Initialising Secure Protocol</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-screen w-screen bg-[#05070a] text-slate-200 overflow-hidden font-sans">
+    <div className="flex h-screen w-screen bg-[#030407] text-slate-200 overflow-hidden font-sans selection:bg-indigo-500/30">
       <Sidebar 
         onSelect={handleSidebarSelect} 
         activeId={activeSidebarId} 
@@ -98,24 +147,28 @@ const App: React.FC = () => {
       />
       
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <header className="h-16 border-b border-white/5 flex items-center justify-between px-8 bg-[#05070a]/80 backdrop-blur-xl sticky top-0 z-20">
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center">
-                <ShieldCheck size={18} className="text-white" />
-              </div>
-              <div className="text-sm font-black tracking-tight text-white uppercase italic">Smart Platform</div>
-            </div>
-            <div className="h-4 w-px bg-white/10"></div>
+        <header className="h-20 border-b border-white/[0.03] flex items-center justify-between px-10 bg-[#030407]/40 backdrop-blur-2xl sticky top-0 z-20">
+          <div className="flex items-center gap-8">
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                  Neural Engine Live
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-800 flex items-center justify-center shadow-lg shadow-indigo-900/20">
+                <Cpu size={20} className="text-white" />
+              </div>
+              <div className="flex flex-col">
+                <div className="text-sm font-black tracking-tighter text-white uppercase italic leading-none">Smart Studio</div>
+                <div className="text-[8px] font-bold text-indigo-400 uppercase tracking-widest mt-1">v2.5 Enterprise</div>
+              </div>
+            </div>
+            
+            <div className="hidden lg:flex items-center gap-6">
+              <div className="h-6 w-px bg-white/[0.05]"></div>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/5 border border-emerald-500/10">
+                  <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></div>
+                  <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">Neural Link Active</span>
               </div>
               {user && (
-                <div className="px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[10px] font-black text-indigo-400">
-                  {user.credits} CREDITS REMAINING
+                <div className="group flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full cursor-pointer hover:bg-indigo-500/20 transition-all">
+                  <Activity size={12} className="text-indigo-400 group-hover:rotate-45 transition-transform" />
+                  <span className="text-[9px] font-black text-indigo-300 uppercase tracking-widest">{user.credits} CR</span>
                 </div>
               )}
             </div>
@@ -125,75 +178,72 @@ const App: React.FC = () => {
             {!user ? (
               <button 
                 onClick={handleGoogleLogin}
-                className="flex items-center gap-2 bg-white text-black px-5 py-2 rounded-xl text-xs font-black transition-all hover:bg-slate-200 shadow-xl"
+                className="flex items-center gap-2 bg-white text-black px-6 py-2.5 rounded-xl text-[10px] font-black transition-all hover:bg-indigo-50 hover:scale-[1.02] shadow-xl active:scale-95"
               >
-                <LogIn size={16} /> Continue with Google
+                <LogIn size={14} /> SIGN IN
               </button>
             ) : (
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-3 bg-slate-900/40 px-3 py-1.5 rounded-full border border-white/5">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Deep Logic</span>
+              <div className="flex items-center gap-5">
+                <div className="flex items-center gap-3 bg-slate-900/40 px-4 py-2 rounded-2xl border border-white/[0.03]">
+                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Deep Logic</span>
                   <button 
                     onClick={() => setIsDeepThinking(!isDeepThinking)}
-                    className={`w-8 h-4 rounded-full relative transition-colors ${isDeepThinking ? 'bg-indigo-600' : 'bg-slate-700'}`}
+                    className={`w-9 h-5 rounded-full relative transition-all duration-500 ${isDeepThinking ? 'bg-indigo-600' : 'bg-slate-800'}`}
                   >
-                    <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isDeepThinking ? 'left-4.5' : 'left-0.5'}`}></div>
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full shadow-lg transition-all duration-500 ${isDeepThinking ? 'left-5' : 'left-1'}`}></div>
                   </button>
                 </div>
-                <img src={user.photoURL} alt="User" className="w-9 h-9 rounded-xl border border-white/10 shadow-lg" />
+                <div className="p-1 rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors">
+                  <img src={user.photoURL} alt="Profile" className="w-8 h-8 rounded-lg object-cover" />
+                </div>
               </div>
             )}
           </div>
         </header>
 
-        {/* Workspace Area */}
-        {activeSidebarId === 'home' ? (
-          <Dashboard onFeatureClick={handleFeatureClick} user={user} />
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center bg-[#05070a] relative overflow-hidden">
-             <div className="z-10 text-center px-8">
-                <div className="w-20 h-20 bg-slate-900 rounded-[2rem] border border-white/5 flex items-center justify-center mx-auto mb-6 shadow-2xl">
-                   <Zap size={32} className="text-indigo-500 animate-pulse" />
+        <main className="flex-1 overflow-hidden">
+          {activeSidebarId === 'home' ? (
+            <Dashboard onFeatureClick={handleFeatureClick} user={user} />
+          ) : (
+             <div className="flex-1 flex flex-col items-center justify-center bg-[#030407] relative overflow-hidden h-full">
+                <div className="z-10 text-center px-8">
+                    <div className="w-20 h-20 bg-slate-900 rounded-[2.5rem] border border-white/5 flex items-center justify-center mx-auto mb-8 shadow-2xl">
+                      <Zap size={32} className="text-indigo-500 animate-pulse" />
+                    </div>
+                    <h2 className="text-3xl font-black text-white mb-3 italic tracking-tighter uppercase">{activeSidebarId.replace('-', ' ')}</h2>
+                    <p className="text-slate-500 max-w-sm mx-auto font-medium text-sm">This module is being initialized through the neural dashboard interface.</p>
+                    <button 
+                      onClick={() => setActiveSidebarId('home')}
+                      className="mt-10 px-10 py-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black rounded-2xl transition-all shadow-xl shadow-indigo-900/20 active:scale-95 tracking-widest uppercase"
+                    >
+                      Return to Dashboard
+                    </button>
                 </div>
-                <h2 className="text-3xl font-black text-white mb-2">{activeSidebarId.toUpperCase()} MODULE</h2>
-                <p className="text-slate-500 max-w-sm mx-auto">Please access the primary dashboard for feature initialization.</p>
-                <button 
-                  onClick={() => setActiveSidebarId('home')}
-                  className="mt-8 px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black rounded-2xl transition-all shadow-xl shadow-indigo-900/20"
-                >
-                  Return to Dashboard
-                </button>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-indigo-600/5 rounded-full blur-[150px]"></div>
              </div>
-             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-indigo-600/5 rounded-full blur-[150px]"></div>
-          </div>
-        )}
+          )}
+        </main>
 
-        {/* AdSense Compliant Footer */}
-        <footer className="mt-auto border-t border-white/5 bg-[#05070a] p-8">
+        <footer className="mt-auto border-t border-white/5 bg-[#030407] p-8">
           <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="flex flex-wrap justify-center gap-6 text-[10px] font-bold text-slate-500 uppercase tracking-tighter">
-              <a href="#" className="hover:text-indigo-400 transition-colors">Home</a>
-              <a href="#" className="hover:text-indigo-400 transition-colors">About Us</a>
-              <a href="#" className="hover:text-indigo-400 transition-colors">Contact Us</a>
-              <a href="#" className="hover:text-indigo-400 transition-colors">Privacy Policy</a>
-              <a href="#" className="hover:text-indigo-400 transition-colors">Terms & Conditions</a>
-              <a href="#" className="hover:text-indigo-400 transition-colors">Disclaimer</a>
-              <a href="#" className="hover:text-indigo-400 transition-colors">Cookie Policy</a>
-              <a href="#" className="hover:text-indigo-400 transition-colors">DMCA</a>
-              <a href="#" className="hover:text-indigo-400 transition-colors">FAQ</a>
+            <div className="flex flex-wrap justify-center gap-8 text-[9px] font-black text-slate-500 uppercase tracking-widest">
+              <a href="#" className="hover:text-indigo-400 transition-colors">Platform</a>
+              <a href="#" className="hover:text-indigo-400 transition-colors">Manifesto</a>
+              <a href="#" className="hover:text-indigo-400 transition-colors">Support</a>
+              <a href="#" className="hover:text-indigo-400 transition-colors">Privacy</a>
+              <a href="#" className="hover:text-indigo-400 transition-colors">Terms</a>
             </div>
-            <p className="text-[10px] text-slate-700 font-mono">© 2025 SMART PLATFORM • SECURE NEURAL ARCHITECTURE</p>
+            <p className="text-[9px] text-slate-700 font-mono font-bold tracking-widest">© 2025 MANIFEST AI • SECURE NEURAL ARCHITECTURE</p>
           </div>
         </footer>
       </div>
 
-      {/* Feature Production Modal */}
       {activeFeature && (
         <FeatureModal 
           type={activeFeature} 
           onClose={() => setActiveFeature(null)} 
           isThinking={isDeepThinking}
-          onSuccess={() => deductCredits(10)} // Only for limited features (logic in modal)
+          onSuccess={refreshCredits}
         />
       )}
     </div>

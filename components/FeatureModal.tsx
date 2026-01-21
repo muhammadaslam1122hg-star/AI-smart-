@@ -81,30 +81,29 @@ const FeatureModal: React.FC<FeatureModalProps> = ({ type, onClose, isThinking, 
           break;
 
         case FeatureType.TEXT_TO_VOICE:
-          await geminiService.textToSpeech(userPrompt);
-          response = "Voice Synthesis Complete. Audio playing in neural buffer.";
+          response = await geminiService.textToSpeech(userPrompt);
           break;
 
         case FeatureType.SMART_QUESTION:
-          response = await geminiService.generateText(userPrompt, `You are an Elite Educator. Solve the user's problem step-by-step. Language: ${selectedLanguage.language}`, attachments);
+          response = await geminiService.generateText(userPrompt, `You are an Elite Educator. Solve the user's problem step-by-step. Language: ${selectedLanguage.language}`, attachments, isThinking);
           break;
 
         case FeatureType.JSON_PROMPT_GENERATOR:
-          response = await geminiService.generateText(userPrompt, `Generate a complex JSON structure for ${mainCategory}. Metadata in ${selectedLanguage.language}. RAW JSON ONLY.`, attachments);
+          response = await geminiService.generateText(userPrompt, `Generate a complex JSON structure for ${mainCategory}. Metadata in ${selectedLanguage.language}. RAW JSON ONLY.`, attachments, isThinking);
           break;
 
         case FeatureType.DESIGNER_TOOL:
-          response = await geminiService.generateText(userPrompt, `You are a Lead UI/UX Designer. Create a detailed design spec and wireframe description in ${selectedLanguage.language}.`, attachments);
+          response = await geminiService.generateText(userPrompt, `You are a Lead UI/UX Designer. Create a detailed design spec and wireframe description in ${selectedLanguage.language}.`, attachments, isThinking);
           break;
 
         case FeatureType.TOOL_CREATOR:
-          response = await geminiService.generateText(userPrompt, `Create a complete logic and code for a functional AI utility tool. Documentation in ${selectedLanguage.language}.`, attachments);
+          response = await geminiService.generateText(userPrompt, `Create a complete logic and code for a functional AI utility tool. Documentation in ${selectedLanguage.language}.`, attachments, isThinking);
           break;
 
         default:
           // Builders (Website, WebApp, MobileApp, Agent)
           const systemMsg = `You are a Senior SaaS Architect. Generate full project structures, code snippets, and deployment logic for a ${type.replace(/_/g, ' ')}. Use ${selectedLanguage.language} for descriptions.`;
-          response = await geminiService.generateText(userPrompt, systemMsg, attachments);
+          response = await geminiService.generateText(userPrompt, systemMsg, attachments, isThinking);
       }
 
       setResult(response);
@@ -251,10 +250,16 @@ const FeatureModal: React.FC<FeatureModalProps> = ({ type, onClose, isThinking, 
 
             {result && (
               <div className="w-full h-full animate-in fade-in duration-700 bg-[#05070a]">
-                {result.startsWith('blob:') || result.startsWith('http') ? (
+                {result.startsWith('blob:') || result.startsWith('http') || result.startsWith('data:video') ? (
                   <video src={result} controls autoPlay className="w-full h-full object-contain" />
                 ) : result.startsWith('data:image') ? (
                   <img src={result} className="w-full h-full object-contain" />
+                ) : result.startsWith('data:audio') ? (
+                  <div className="flex flex-col items-center justify-center h-full gap-4">
+                     <Mic2 size={48} className="text-indigo-400 animate-pulse" />
+                     <audio src={result} controls autoPlay className="w-64" />
+                     <p className="text-[10px] text-slate-500 uppercase font-black">Audio Playback Active</p>
+                  </div>
                 ) : (
                   <div className="p-10 w-full h-full overflow-y-auto text-sm text-slate-300 font-medium custom-scrollbar">
                     <pre className="whitespace-pre-wrap font-sans">{result}</pre>
